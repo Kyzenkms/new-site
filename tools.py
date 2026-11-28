@@ -99,6 +99,32 @@ class Toolbox:
 
     # ---- model ------------------------------------------------------
     def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+        """One model call with retry + backoff.
+
+        Two providers, chosen by env: MODEL_API_KEY set -> any
+        OpenAI-compatible endpoint (MODEL_BASE_URL, MODEL_NAME);
+        otherwise GEMINI_API_KEY -> Google Gemini.
+        """
+        if os.environ.get("MODEL_API_KEY", "").strip():
+            return self._call_openai_compatible(prompt, max_tokens)
+        return self._call_gemini(prompt, max_tokens)
+
+    def _call_openai_compatible(self, prompt: str, max_tokens: int) -> str:
+        key = os.environ["MODEL_API_KEY"].strip()
+        base = os.environ.get("MODEL_BASE_URL", "https://agentrouter.org/v1").rstrip("/")
+        model = os.environ.get("MODEL_NAME", "").strip()
+        if not model:
+            raise ModelError("MODEL_NAME is not set for the OpenAI-compatible provider")
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens, "temperature": 0.4,
+        }).encode()
+        return self._post(f"{base}/chat/completions", body,
+                          {"Authorization": f"Bearer {key}"},
+                          lambda d: d["choices"][0]["message"]["content"])
+
+    def _call_gemini(self, prompt: str, max_tokens: int) -> str:
         key = os.environ.get("GEMINI_API_KEY", "").strip()
         if not key:
             raise ModelError("GEMINI_API_KEY is not set")
@@ -108,19 +134,23 @@ class Toolbox:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
         }).encode()
+        return self._post(url, body, {"x-goog-api-key": key},
+                          lambda d: "".join(
+                              p.get("text", "")
+                              for p in d["candidates"][0]["content"]["parts"]))
+
+    @staticmethod
+    def _post(url: str, body: bytes, headers: dict, extract) -> str:
         last_err = None
-        for attempt, wait in enumerate([0, 2, 5]):
+        for wait in (0, 2, 5):
             if wait:
                 time.sleep(wait)
             req = urllib.request.Request(
                 url, data=body, method="POST",
-                headers={"Content-Type": "application/json", "x-goog-api-key": key},
-            )
+                headers={"Content-Type": "application/json", **headers})
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:
-                    data = json.loads(resp.read().decode())
-                parts = data["candidates"][0]["content"]["parts"]
-                return "".join(p.get("text", "") for p in parts)
+                    return extract(json.loads(resp.read().decode()))
             except (urllib.error.URLError, KeyError, IndexError, TimeoutError) as e:
                 last_err = e
         raise ModelError(f"model call failed after retries: {type(last_err).__name__}")
