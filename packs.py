@@ -37,6 +37,33 @@ the question in the form [answer: B]. Keep questions factual and drawn
 from the notes."""
 
 
+def excerpt_for(notes: str, topics: list[str], cap: int = 30000) -> str:
+    """The note sections that match today's topics, plus the intro.
+
+    Beats head-truncation: on a long note, the sections for today's
+    topics are what the pack must be grounded in, wherever they sit.
+    """
+    intro: list[str] = []
+    sections: list[list[str]] = []
+    current = None
+    for line in notes.splitlines():
+        if line.lstrip().startswith("#"):
+            current = [line]
+            sections.append(current)
+        elif current is None:
+            intro.append(line)
+        else:
+            current.append(line)
+    wanted = [t.lower() for t in topics]
+    picked = list(intro)
+    for sec in sections:
+        head = sec[0].lstrip("# ").strip().lower()
+        if any(t in head or head in t for t in wanted):
+            picked += sec
+    text = "\n".join(picked).strip()
+    return (text or notes)[:cap]
+
+
 def build_pack(box: Toolbox, trace: Trace, day: dict,
                notes_by_subject: dict[str, str]) -> tuple[str, dict]:
     """Generate the pack for one plan day. Returns (markdown, stats)."""
@@ -56,7 +83,7 @@ def build_pack(box: Toolbox, trace: Trace, day: dict,
             trace.log("pack_subject_skipped", subject=subj, reason="no notes")
             continue
         prompt = PROMPT.format(subject=subj, topics=", ".join(topics),
-                               notes=notes[:30000])
+                               notes=excerpt_for(notes, topics))
         try:
             out = box.call_model(prompt, max_tokens=8192)
             if "## Quiz" not in out:
