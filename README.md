@@ -59,9 +59,18 @@ and it never deletes anything, anywhere.
 
 ## Run it
 
+Two minutes, no notes of your own needed - the repo ships a demo with
+my real first-semester notes and three planted trap files mixed in:
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+./demo.sh
+```
+
+With your own notes:
+
+```bash
 cp .env.example .env    # add your Gemini API key; never commit .env
 cp /path/to/notes/*.md inbox/
 python3 agent.py --inbox inbox --output output \
