@@ -51,6 +51,8 @@ def main() -> int:
     ap.add_argument("--output", default="output", help="folder for plan + trace")
     ap.add_argument("--exam-date", default=None,
                     help="exam date YYYY-MM-DD (yours outranks any date in the notes)")
+    ap.add_argument("--exam-dates", default=None,
+                    help="per-subject exam dates, e.g. 'IKS=2026-12-07,LAS=2026-12-09'")
     ap.add_argument("--start-date", default=None, help="plan start YYYY-MM-DD (default: today)")
     ap.add_argument("--max-steps", type=int, default=MAX_STEPS_DEFAULT)
     ap.add_argument("--mark-done", default=None, metavar="YYYY-MM-DD",
@@ -110,6 +112,7 @@ def main() -> int:
     questions: list[str] = []
     subjects: dict[str, list[str]] = {}
     notes_by_subject: dict[str, str] = {}
+    subject_note_dates: dict[str, list[str]] = {}
     report_lines: list[str] = ["# Ingest report", ""]
 
     files = box.list_inbox()
@@ -145,6 +148,11 @@ def main() -> int:
             trace.log("note_broken_data", file=path.name, detail=meta["json_error"])
             report_lines.append(f"- BROKEN DATA `{path.name}`: JSON error ({meta['json_error']}). "
                                 "Recovered what parsed; flagged, not silently dropped.")
+        for prob in box.last_problems:
+            if prob == meta.get("json_error"):
+                continue
+            trace.log("note_data_problem", file=path.name, problem=prob)
+            report_lines.append(f"- DATA PROBLEM `{path.name}`: {prob}")
         if not srep["salvageable"]:
             trace.log("note_quarantined", file=path.name,
                       reason="nothing salvageable after sanitising")
@@ -156,11 +164,14 @@ def main() -> int:
         subjects.setdefault(subj, []).extend(
             t for t in topics if t not in subjects.get(subj, []))
         notes_by_subject[subj] = (notes_by_subject.get(subj, "") + "\n\n" + clean).strip()
+        subject_note_dates.setdefault(subj, []).extend(
+            d for d in planner.note_dates(clean)
+            if d not in subject_note_dates.get(subj, []))
         report_lines.append(f"- OK `{path.name}` -> {subj}: {len(topics)} topic(s)"
                             + (f", {meta['pages']} page(s)" if meta.get("pages") else "")
                             + (f", encoding {meta['encoding']}" if meta.get("encoding") else ""))
 
-    # ---- exam date: the user's word outranks the notes ----------------
+    # ---- exam dates: the user's word outranks the notes ---------------
     exam = None
     exam_source = None
     if args.exam_date:
@@ -169,39 +180,65 @@ def main() -> int:
             questions.append(f"Your exam date '{args.exam_date}' is not a real calendar date.")
         else:
             exam_source = "given by you"
-    note_date_strs: list[str] = []
-    for path in files:
-        try:
-            raw_text, _ = box.read_note(path)
-        except NoteError:
-            continue
-        note_date_strs += planner.note_dates(raw_text)
-    parsed_note_dates = {d: safety.parse_date(d) for d in set(note_date_strs)}
-    broken_dates = [d for d, p in parsed_note_dates.items() if p is None]
-    valid_note_dates = sorted({p for p in parsed_note_dates.values() if p is not None})
+    exam_dates: dict[str, date] = {}
+    if args.exam_dates:
+        for pair in args.exam_dates.split(","):
+            name, _, when = pair.partition("=")
+            parsed = safety.parse_date(when.strip())
+            if parsed is None:
+                questions.append(f"Your exam date for {name.strip()} "
+                                 f"('{when.strip()}') is not a real calendar date.")
+            else:
+                exam_dates[name.strip().upper()] = parsed
+        if exam_dates and exam is None:
+            exam, exam_source = max(exam_dates.values()), "given by you"
+
+    default_year = (exam or date.today()).year
+    all_note_dates: set[date] = set()
+    broken_dates: list[str] = []
+    conflicts: list[str] = []
+    for subj, raws in subject_note_dates.items():
+        parsed = set()
+        for raw in raws:
+            p = safety.parse_date(raw, default_year)
+            if p is None:
+                if raw not in broken_dates:
+                    broken_dates.append(raw)
+            else:
+                parsed.add(p)
+        all_note_dates |= parsed
+        if len(parsed) > 1:
+            report_lines.append(
+                f"- DATES IN NOTES {subj}: "
+                + ", ".join(d.isoformat() for d in sorted(parsed))
+                + " - more than one date in the material; planned on yours.")
+        subj_exam = exam_dates.get(subj.upper(), exam)
+        if subj_exam is not None and parsed and subj_exam not in parsed:
+            conflicts.append(
+                f"{subj}: your date {subj_exam.isoformat()} vs note date(s) "
+                + ", ".join(d.isoformat() for d in sorted(parsed)))
     if broken_dates:
         trace.log("broken_dates_flagged", dates=broken_dates)
         report_lines.append(f"- BROKEN DATA: impossible date(s) in notes: {', '.join(broken_dates)} "
                             "- flagged, not planned around.")
-    if exam is not None and valid_note_dates and exam not in valid_note_dates:
-        trace.log("date_conflict", user_date=exam.isoformat(),
-                  note_dates=[d.isoformat() for d in valid_note_dates])
-        report_lines.append(
-            f"- DATE CONFLICT: your date {exam.isoformat()} vs note date(s) "
-            f"{', '.join(d.isoformat() for d in valid_note_dates)}. "
-            "Planned on YOUR date; the note dates are recorded here, not silently used.")
+    if conflicts:
+        trace.log("date_conflict", detail=conflicts)
+        for c in conflicts:
+            report_lines.append(f"- DATE CONFLICT: {c}. Planned on YOUR date; "
+                                "the note dates are recorded here, not silently used.")
         print("  date conflict flagged: your date wins, notes recorded")
     if exam is None:
-        if len(valid_note_dates) == 1:
-            exam, exam_source = valid_note_dates[0], "found in your notes"
-        elif len(valid_note_dates) > 1:
+        if len(all_note_dates) == 1:
+            exam, exam_source = next(iter(all_note_dates)), "found in your notes"
+        elif len(all_note_dates) > 1:
             questions.append(
                 "Your notes give more than one exam date ("
-                + ", ".join(d.isoformat() for d in valid_note_dates)
+                + ", ".join(d.isoformat() for d in sorted(all_note_dates))
                 + "). Which one is right?")
         else:
             questions.append("No exam date given and none found in the notes. "
                              "Re-run with --exam-date YYYY-MM-DD.")
+    resolved = {s: exam_dates.get(s.upper(), exam) for s in subjects}
 
     start = safety.parse_date(args.start_date) if args.start_date else date.today()
     if not step("plan_built", exam=str(exam), subjects=list(subjects)):
@@ -224,8 +261,8 @@ def main() -> int:
         trace.log("reshuffle", done_topics=len(done))
         print(f"  reshuffled: {len(done)} finished item(s) left out of the new plan")
 
-    plan = planner.build_plan(subjects, start, exam)
-    box.write_output("plan.md", planner.render_plan(plan, exam, exam_source))
+    plan = planner.build_plan(subjects, start, resolved, exam)
+    box.write_output("plan.md", planner.render_plan(plan, resolved, exam_source))
     progress["plan"] = plan
     progress_path.write_text(json.dumps(progress, indent=1), encoding="utf-8")
 
@@ -243,8 +280,12 @@ def main() -> int:
             trace.log("pack_skipped", reason="no model API key configured")
             pack_note = " Pack skipped: no model API key configured."
     trace.log("run_done", days=len(plan), questions=0)
-    print(f"Done: plan for exam {exam.isoformat()} ({exam_source}), "
-          f"{len(plan)} day(s), {len(subjects)} subject(s). See output/plan.md.{pack_note}")
+    span = ""
+    if resolved:
+        span = (f" Exams {min(resolved.values()).isoformat()} to "
+                f"{max(resolved.values()).isoformat()}.")
+    print(f"Done: {len(plan)} day(s), {len(subjects)} subject(s).{span} "
+          f"See output/plan.md.{pack_note}")
     return 0
 
 
