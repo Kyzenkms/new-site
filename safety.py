@@ -64,37 +64,82 @@ def sanitise(text: str) -> tuple[str, dict]:
 _MONTHS = {name: i + 1 for i, name in enumerate(
     ["january", "february", "march", "april", "may", "june", "july",
      "august", "september", "october", "november", "december"])}
-_MONTH_ALT = "|".join(_MONTHS)
+_MONTHS.update({"jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+                "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12})
+_MONTH_ALT = "|".join(sorted(_MONTHS, key=len, reverse=True))
+
+_ORDINAL_WORDS = [
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh",
+    "eighth", "ninth", "tenth", "eleventh", "twelfth", "thirteenth",
+    "fourteenth", "fifteenth", "sixteenth", "seventeenth", "eighteenth",
+    "nineteenth", "twentieth", "twenty-first", "twenty-second",
+    "twenty-third", "twenty-fourth", "twenty-fifth", "twenty-sixth",
+    "twenty-seventh", "twenty-eighth", "twenty-ninth", "thirtieth",
+    "thirty-first",
+]
+_ORDINALS = {w: i + 1 for i, w in enumerate(_ORDINAL_WORDS)}
+_ORDINAL_ALT = "|".join(sorted(_ORDINALS, key=len, reverse=True))
+_ORDINAL = rf"(?:\d{{1,2}}(?:st|nd|rd|th)|{_ORDINAL_ALT})"
 
 
-def parse_date(text: str) -> date | None:
-    """Parse YYYY-MM-DD, DD-MM-YYYY or '12 December 2026'; None when impossible."""
+def _ordinal_value(token: str) -> int:
+    token = token.lower()
+    if token[0].isdigit():
+        return int(re.match(r"\d+", token).group(0))
+    return _ORDINALS[token]
+
+
+def _make(year, month, day):
+    try:
+        return date(year, month, day)
+    except (ValueError, TypeError):
+        return None
+
+
+def parse_date(text: str, default_year: int | None = None) -> date | None:
+    """Parse a date in the shapes students actually write.
+
+    ISO, DD-MM-YYYY, DD/MM/YYYY, '12 December 2026', 'Dec 7 2026', and
+    written-out ordinals like 'the fourth of December' (Trap Pack #12 -
+    year taken from default_year). Impossible dates return None.
+    """
     m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
     if m:
-        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    else:
-        m = re.search(r"\b(\d{2})-(\d{2})-(\d{4})\b", text)
-        if m:
-            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        else:
-            m = re.search(rf"\b(\d{{1,2}})\s+({_MONTH_ALT})\s+(\d{{4}})\b", text, re.IGNORECASE)
-            if m:
-                d, mo, y = int(m.group(1)), _MONTHS[m.group(2).lower()], int(m.group(3))
-            else:
-                m = re.search(rf"\b({_MONTH_ALT})\s+(\d{{1,2}}),?\s+(\d{{4}})\b", text, re.IGNORECASE)
-                if not m:
-                    return None
-                mo, d, y = _MONTHS[m.group(1).lower()], int(m.group(2)), int(m.group(3))
-    try:
-        return date(y, mo, d)
-    except ValueError:
-        return None
+        return _make(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    m = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", text)
+    if m:
+        return _make(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    m = re.search(rf"\b(\d{{1,2}})\s+({_MONTH_ALT})\s+(\d{{4}})\b", text, re.IGNORECASE)
+    if m:
+        return _make(int(m.group(3)), _MONTHS[m.group(2).lower()], int(m.group(1)))
+    m = re.search(rf"\b({_MONTH_ALT})\s+(\d{{1,2}}),?\s+(\d{{4}})\b", text, re.IGNORECASE)
+    if m:
+        return _make(int(m.group(3)), _MONTHS[m.group(1).lower()], int(m.group(2)))
+    m = re.search(rf"\b(?:the\s+)?({_ORDINAL})\s+(?:of\s+)?({_MONTH_ALT})(?:\s+(\d{{4}}))?\b",
+                  text, re.IGNORECASE)
+    if m:
+        year = int(m.group(3)) if m.group(3) else default_year
+        if year:
+            return _make(year, _MONTHS[m.group(2).lower()], _ordinal_value(m.group(1)))
+    m = re.search(rf"\b({_MONTH_ALT})\s+(?:the\s+)?({_ORDINAL})(?:,?\s+(\d{{4}}))?\b",
+                  text, re.IGNORECASE)
+    if m:
+        year = int(m.group(3)) if m.group(3) else default_year
+        if year:
+            return _make(year, _MONTHS[m.group(1).lower()], _ordinal_value(m.group(2)))
+    return None
 
 
 def find_dates(text: str) -> list[str]:
     """All date-shaped strings in the text, valid or not."""
     found = re.findall(r"\d{4}-\d{2}-\d{2}", text)
-    found += re.findall(r"\b\d{2}-\d{2}-\d{4}\b", text)
+    found += re.findall(r"\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b", text)
     found += re.findall(rf"\b\d{{1,2}}\s+(?:{_MONTH_ALT})\s+\d{{4}}\b", text, re.IGNORECASE)
     found += re.findall(rf"\b(?:{_MONTH_ALT})\s+\d{{1,2}},?\s+\d{{4}}\b", text, re.IGNORECASE)
+    found += re.findall(
+        rf"\b(?:the\s+)?{_ORDINAL}\s+(?:of\s+)?(?:{_MONTH_ALT})(?:\s+\d{{4}})?\b",
+        text, re.IGNORECASE)
+    found += re.findall(
+        rf"\b(?:{_MONTH_ALT})\s+(?:the\s+)?{_ORDINAL}(?:,?\s+\d{{4}})?\b",
+        text, re.IGNORECASE)
     return found
