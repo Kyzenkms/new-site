@@ -1,0 +1,20 @@
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "run_start", "inbox": "/tmp/sp5/inbox", "output": "/tmp/sp5/output"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "inbox_listed", "files": ["cft-cae1.md", "ep-cae1.md", "fda-cae1.md", "icde-cae1.md", "iks-cae1.md", "las-cae1.md", "pps-cae1.md"]}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "cft-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "ep-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "fda-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "icde-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "iks-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "las-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "read_note", "file": "pps-cae1.md"}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "plan_built", "exam": "2026-12-19", "subjects": ["CFT", "EP", "FDA", "ICDE", "IKS", "LAS", "PPS"]}
+{"ts": "2026-11-28T04:43:21+0000", "run": "a2219995", "event": "pack_generate", "date": "2026-11-28"}
+{"ts": "2026-11-28T04:43:31+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "CFT", "topics": 2}
+{"ts": "2026-11-28T04:43:40+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "EP", "topics": 4}
+{"ts": "2026-11-28T04:43:52+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "FDA", "topics": 3}
+{"ts": "2026-11-28T04:44:02+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "ICDE", "topics": 2}
+{"ts": "2026-11-28T04:44:11+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "IKS", "topics": 4}
+{"ts": "2026-11-28T04:44:25+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "LAS", "topics": 3}
+{"ts": "2026-11-28T04:44:39+0000", "run": "a2219995", "event": "pack_subject_done", "subject": "PPS", "topics": 2}
+{"ts": "2026-11-28T04:44:39+0000", "run": "a2219995", "event": "pack_done", "subjects_ok": 7, "subjects_failed": 0}
+{"ts": "2026-11-28T04:44:39+0000", "run": "a2219995", "event": "run_done", "days": 21, "questions": 0}
