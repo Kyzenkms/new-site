@@ -36,7 +36,10 @@ The agent's only hands are in `tools.py`:
 - `call_model` - the only network call. Gemini by default
   (`GEMINI_API_KEY`, model `gemini-2.5-flash`); any OpenAI-compatible
   endpoint via `MODEL_API_KEY` / `MODEL_BASE_URL` / `MODEL_NAME`.
-  Retry with backoff (0s, 2s, 5s), 60s timeout.
+  Calls are paced (default 13s apart, `MODEL_MIN_INTERVAL`) to live
+  inside free-tier quotas - the Gemini free tier caps requests per
+  minute and per day per model - and a 429 gets a long backoff
+  instead of the standard retry.
 
 ## Guardrails
 
