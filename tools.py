@@ -243,16 +243,30 @@ class Toolbox:
         return target
 
     # ---- model ------------------------------------------------------
+    _last_call = 0.0
+
     def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
         """One model call with retry + backoff.
 
         Two providers, chosen by env: MODEL_API_KEY set -> any
         OpenAI-compatible endpoint (MODEL_BASE_URL, MODEL_NAME);
         otherwise GEMINI_API_KEY -> Google Gemini.
+
+        Calls are paced: the Gemini free tier allows 5 requests/minute
+        on this key, and a 7-subject pack fires 7 calls back to back -
+        without pacing the whole pack died on HTTP 429 (found by the
+        demo recording, 28 Nov). MODEL_MIN_INTERVAL overrides the gap.
         """
-        if os.environ.get("MODEL_API_KEY", "").strip():
-            return self._call_openai_compatible(prompt, max_tokens)
-        return self._call_gemini(prompt, max_tokens)
+        gap = float(os.environ.get("MODEL_MIN_INTERVAL", "13"))
+        wait = Toolbox._last_call + gap - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            if os.environ.get("MODEL_API_KEY", "").strip():
+                return self._call_openai_compatible(prompt, max_tokens)
+            return self._call_gemini(prompt, max_tokens)
+        finally:
+            Toolbox._last_call = time.monotonic()
 
     def _call_openai_compatible(self, prompt: str, max_tokens: int) -> str:
         key = os.environ["MODEL_API_KEY"].strip()
@@ -287,7 +301,8 @@ class Toolbox:
     @staticmethod
     def _post(url: str, body: bytes, headers: dict, extract) -> str:
         last_err = None
-        for wait in (0, 2, 5):
+        wait = 0.0
+        for _ in range(4):
             if wait:
                 time.sleep(wait)
             req = urllib.request.Request(
@@ -296,6 +311,10 @@ class Toolbox:
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:
                     return extract(json.loads(resp.read().decode()))
+            except urllib.error.HTTPError as e:
+                last_err = e
+                wait = 20.0 if e.code == 429 else 3.0  # quota: back right off
             except (urllib.error.URLError, KeyError, IndexError, TimeoutError) as e:
                 last_err = e
+                wait = 3.0
         raise ModelError(f"model call failed after retries: {type(last_err).__name__}")
