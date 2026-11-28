@@ -15,11 +15,13 @@ Safety, by construction:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from datetime import date
 from pathlib import Path
 
+import packs
 import planner
 import safety
 from tools import ModelError, NoteError, Toolbox
@@ -51,6 +53,8 @@ def main() -> int:
                     help="exam date YYYY-MM-DD (yours outranks any date in the notes)")
     ap.add_argument("--start-date", default=None, help="plan start YYYY-MM-DD (default: today)")
     ap.add_argument("--max-steps", type=int, default=MAX_STEPS_DEFAULT)
+    ap.add_argument("--mark-done", default=None, metavar="YYYY-MM-DD",
+                    help="mark that plan day as completed, then exit")
     args = ap.parse_args()
 
     load_dotenv()
@@ -79,8 +83,33 @@ def main() -> int:
     trace.log("run_start", inbox=str(inbox), output=str(output))
     print(f"StudyPilot run {trace.run_id}: reading {inbox} ...")
 
+    progress_path = box.output / "progress.json"
+    progress = {"plan": [], "done_topics": [], "done_days": []}
+    if progress_path.exists():
+        try:
+            progress.update(json.loads(progress_path.read_text(encoding="utf-8")))
+        except json.JSONDecodeError:
+            trace.log("progress_unreadable", reason="progress.json is not valid JSON")
+
+    if args.mark_done:
+        day = next((d for d in progress["plan"] if d["date"] == args.mark_done), None)
+        if day is None:
+            print(f"No plan day {args.mark_done} in progress.json - nothing marked.")
+            return 2
+        for item in day["items"]:
+            if item not in progress["done_topics"]:
+                progress["done_topics"].append(item)
+        if args.mark_done not in progress["done_days"]:
+            progress["done_days"].append(args.mark_done)
+        progress_path.write_text(json.dumps(progress, indent=1), encoding="utf-8")
+        trace.log("day_marked_done", date=args.mark_done)
+        print(f"Marked {args.mark_done} done ({len(day['items'])} item(s)). "
+              "The next run reshuffles what remains.")
+        return 0
+
     questions: list[str] = []
     subjects: dict[str, list[str]] = {}
+    notes_by_subject: dict[str, str] = {}
     report_lines: list[str] = ["# Ingest report", ""]
 
     files = box.list_inbox()
@@ -126,6 +155,7 @@ def main() -> int:
         topics = planner.extract_topics(clean, subj)
         subjects.setdefault(subj, []).extend(
             t for t in topics if t not in subjects.get(subj, []))
+        notes_by_subject[subj] = (notes_by_subject.get(subj, "") + "\n\n" + clean).strip()
         report_lines.append(f"- OK `{path.name}` -> {subj}: {len(topics)} topic(s)"
                             + (f", {meta['pages']} page(s)" if meta.get("pages") else "")
                             + (f", encoding {meta['encoding']}" if meta.get("encoding") else ""))
@@ -186,11 +216,35 @@ def main() -> int:
         print("Stopped to ask - see output/QUESTIONS.md")
         return 2
 
+    done = set(progress["done_topics"])
+    if done:
+        subjects = {s: [t for t in ts if f"{s}: {t}" not in done]
+                    for s, ts in subjects.items()}
+        subjects = {s: ts for s, ts in subjects.items() if ts}
+        trace.log("reshuffle", done_topics=len(done))
+        print(f"  reshuffled: {len(done)} finished item(s) left out of the new plan")
+
     plan = planner.build_plan(subjects, start, exam)
     box.write_output("plan.md", planner.render_plan(plan, exam, exam_source))
+    progress["plan"] = plan
+    progress_path.write_text(json.dumps(progress, indent=1), encoding="utf-8")
+
+    pack_note = ""
+    if plan and plan[0]["kind"] == "study":
+        if os.environ.get("GEMINI_API_KEY") or os.environ.get("MODEL_API_KEY"):
+            if not step("pack_generate", date=plan[0]["date"]):
+                return 3
+            pack_md, stats = packs.build_pack(box, trace, plan[0], notes_by_subject)
+            box.write_output(f"packs/{plan[0]['date']}.md", pack_md)
+            pack_note = (f" Pack for {plan[0]['date']}: {stats['subjects_ok']} subject(s) "
+                         f"generated, {stats['subjects_failed']} failed/skipped.")
+            trace.log("pack_done", **stats)
+        else:
+            trace.log("pack_skipped", reason="no model API key configured")
+            pack_note = " Pack skipped: no model API key configured."
     trace.log("run_done", days=len(plan), questions=0)
     print(f"Done: plan for exam {exam.isoformat()} ({exam_source}), "
-          f"{len(plan)} day(s), {len(subjects)} subject(s). See output/plan.md")
+          f"{len(plan)} day(s), {len(subjects)} subject(s). See output/plan.md.{pack_note}")
     return 0
 
 
