@@ -1,0 +1,6 @@
+# StudyPilot - Agentware 2026 submission descriptor
+name = "StudyPilot"
+track = "Research & Study"
+entrypoint = "agent.py"
+runtime = "python >= 3.11"
+dependencies = "requirements.txt"
